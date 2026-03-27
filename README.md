@@ -94,3 +94,4 @@ So just unban your bot, if it's banned.
 # CAUTION ⚠
 ### Aternos might detect your suspicious actions and delete your account!  
 **By using this, you acknowledge that you're responsible for any problems arise.**  
+# aterbotdat1389
