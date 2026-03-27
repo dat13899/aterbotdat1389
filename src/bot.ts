@@ -1,73 +1,91 @@
-import Mineflayer from 'mineflayer';
-import { sleep, getRandom } from "./utils.ts";
+import { createClient, Client } from 'bedrock-protocol';
 import CONFIG from "../config.json" assert {type: 'json'};
 
+const getFormattedTime = () => {
+	const now = new Date();
+	const hh = String(now.getHours()).padStart(2, '0');
+	const mm = String(now.getMinutes()).padStart(2, '0');
+	const ss = String(now.getSeconds()).padStart(2, '0');
+	const dd = String(now.getDate()).padStart(2, '0');
+	const mo = String(now.getMonth() + 1).padStart(2, '0');
+	const yyyy = now.getFullYear();
+	return `[${hh}:${mm}:${ss} ${dd}/${mo}/${yyyy}]`;
+};
+
+const originalLog = console.log;
+console.log = (...args) => originalLog(`${getFormattedTime()}`, ...args);
+
+const originalError = console.error;
+console.error = (...args) => originalError(`${getFormattedTime()}`, ...args);
+
 let loop: NodeJS.Timeout;
-let bot: Mineflayer.Bot;
+let client: Client | undefined;
+let isReconnecting = false;
+let retryDelay = 5000;
 
 const disconnect = (): void => {
 	clearInterval(loop);
-	bot?.quit?.();
-	bot?.end?.();
+	if (client) {
+		try { client.close(); } catch (_) { }
+	}
 };
-const reconnect = async (): Promise<void> => {
-	console.log(`Trying to reconnect in ${CONFIG.action.retryDelay / 1000} seconds...\n`);
+
+const reconnect = (): void => {
+	if (isReconnecting) return;
+	isReconnecting = true;
+	console.log(`Trying to reconnect in ${retryDelay / 1000} seconds...\n`);
 
 	disconnect();
-	await sleep(CONFIG.action.retryDelay);
-	createBot();
-	return;
+	setTimeout(() => {
+		isReconnecting = false;
+		createBot();
+	}, retryDelay);
 };
 
 const createBot = (): void => {
-	bot = Mineflayer.createBot({
+	client = createClient({
 		host: CONFIG.client.host,
 		port: +CONFIG.client.port,
-		username: CONFIG.client.username
-	} as const);
-
-
-	bot.once('error', error => {
-		console.error(`AFKBot got an error: ${error}`);
+		username: CONFIG.client.username,
+		offline: true
 	});
-	bot.once('kicked', rawResponse => {
-		console.error(`\n\nAFKbot is disconnected: ${rawResponse}`);
+
+	client.on('error', (error: any) => {
+		console.error(`AFKBot got an error:`, error);
 	});
-	bot.once('end', () => void reconnect());
 
-	bot.once('spawn', () => {
-		const changePos = async (): Promise<void> => {
-			const lastAction = getRandom(CONFIG.action.commands) as Mineflayer.ControlState;
-			const halfChance: boolean = Math.random() < 0.5? true : false; // 50% chance to sprint
+	client.on('disconnect', (packet: any) => {
+		console.error(`\n\nAFKbot is disconnected:`, packet);
+		reconnect();
+	});
 
-			console.debug(`${lastAction}${halfChance? " with sprinting" : ''}`);
+	client.on('close', () => {
+		console.log("Connection closed.");
+		reconnect();
+	});
 
-			bot.setControlState('sprint', halfChance);
-			bot.setControlState(lastAction, true); // starts the selected random action
+	client.on('spawn', () => {
+		console.log(`AFKBot spawned in as ${CONFIG.client.username}\n\n`);
+		console.log(`Bot is connected and idling...`);
 
-			await sleep(CONFIG.action.holdDuration);
-			bot.clearControlStates();
-			return;
-		};
-		const changeView = async (): Promise<void> => {
-			const yaw = (Math.random() * Math.PI) - (0.5 * Math.PI),
-				pitch = (Math.random() * Math.PI) - (0.5 * Math.PI);
-			
-			await bot.look(yaw, pitch, false);
-			return;
-		};
-		
+		// Wave action every 3 seconds
 		loop = setInterval(() => {
-			changeView();
-			changePos();
-		}, CONFIG.action.holdDuration);
+			if (!client) return;
+			try {
+				if (typeof client.entityId !== 'undefined') {
+					client.write('animate', {
+						action_id: 1, // swing arm
+						runtime_entity_id: client.entityId
+					});
+				}
+			} catch (_) { }
+		}, 3000);
 	});
-	bot.once('login', () => {
-		console.log(`AFKBot logged in ${bot.username}\n\n`);
+
+	client.on('join', () => {
+		console.log(`AFKBot joined the server!\n\n`);
 	});
 };
-
-
 
 export default (): void => {
 	createBot();
